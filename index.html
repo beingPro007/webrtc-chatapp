@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WebRTC P2P Example</title>
+    <!-- Include Socket.IO library -->
+    <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+  </head>
+  <body>
+    <h1>WebRTC Peer-to-Peer Example</h1>
+    <button id="start">Start Connection</button>
+    <button id="send" disabled>Send Message</button>
+    <div id="output"></div>
+
+    <script>
+      const socket = io("http://localhost:3000");
+      let localConnection, remoteConnection, dataChannel;
+      let candidateQueue = [];
+
+      const configuration = {
+        iceServers: [
+          {
+            urls: "stun:stun.l.google.com:19302",
+          },
+        ],
+      };
+
+      const startButton = document.getElementById("start");
+      const sendButton = document.getElementById("send");
+      const output = document.getElementById("output");
+
+      startButton.addEventListener("click", async () => {
+        console.log("Start button clicked");
+
+        // Create local connection
+        localConnection = new RTCPeerConnection(configuration);
+
+        localConnection.onicecandidate = (e) => {
+          if (e.candidate) {
+            socket.emit("ice-candidate", e.candidate);
+            console.log("Sending ICE Candidate:", e.candidate);
+          } else {
+            console.log("End of ICE candidates.");
+          }
+        };
+
+        // Create data channel
+        dataChannel = localConnection.createDataChannel("chat");
+        dataChannel.onopen = () => {
+          output.textContent = "Data channel opened!";
+          sendButton.disabled = false;
+        };
+
+        dataChannel.onmessage = (e) => {
+          output.textContent += `\nMessage received: ${e.data}`;
+        };
+
+        // Create and send offer
+        const offer = await localConnection.createOffer();
+        await localConnection.setLocalDescription(offer);
+        socket.emit("offer", offer);
+        console.log("Offer sent");
+      });
+
+      // Handle incoming SDP offer from remote peer
+      socket.on("offer", async (offer) => {
+        console.log("Offer received");
+        remoteConnection = new RTCPeerConnection(configuration);
+
+        remoteConnection.onicecandidate = (e) => {
+          if (e.candidate) {
+            socket.emit("ice-candidate", e.candidate);
+            console.log("Sending ICE Candidate from remote:", e.candidate);
+          }
+        };
+
+        // Handle incoming data channel
+        remoteConnection.ondatachannel = (e) => {
+          const eventChannel = e.channel;
+          eventChannel.onmessage = (e) => {
+            output.textContent += `\nMessage received from remote: ${e.data}`;
+          };
+          eventChannel.onopen = () => {
+            output.textContent += "\nRemote data channel opened!";
+            sendButton.disabled = false;
+          };
+        };
+
+        // Set remote description and process queued ICE candidates
+        await remoteConnection.setRemoteDescription(offer);
+        console.log("Remote description set for offer");
+        await processIceCandidates(remoteConnection);
+
+        // Create and send answer
+        const answer = await remoteConnection.createAnswer();
+        await remoteConnection.setLocalDescription(answer);
+        socket.emit("answer", answer);
+        console.log("Answer sent");
+      });
+
+      // Handle incoming SDP answer from remote peer
+      socket.on("answer", async (answer) => {
+        console.log("Answer received");
+        await localConnection.setRemoteDescription(answer);
+        console.log("Remote description set for answer");
+        await processIceCandidates(localConnection);
+      });
+
+      // Handle incoming ICE candidates
+      socket.on("ice-candidate", async (candidate) => {
+        const connection = localConnection || remoteConnection;
+        console.log("ICE candidate received", candidate);
+
+        if (connection && connection.remoteDescription) {
+          try {
+            await connection.addIceCandidate(candidate);
+            console.log("Successfully added ICE candidate.");
+          } catch (error) {
+            console.error("Error adding ICE candidate:", error);
+          }
+        } else {
+          console.log("Remote description not set, queuing ICE candidate.");
+          candidateQueue.push(candidate);
+        }
+      });
+
+      // Process queued ICE candidates once the remote description is set
+      async function processIceCandidates(connection) {
+        console.log("Processing queued ICE candidates");
+        while (candidateQueue.length > 0) {
+          const candidate = candidateQueue.shift();
+          try {
+            await connection.addIceCandidate(candidate);
+            console.log("Successfully added queued ICE candidate.");
+          } catch (error) {
+            console.error("Error adding queued ICE candidate:", error);
+          }
+        }
+      }
+
+      // Send a test message to the peer
+      sendButton.addEventListener("click", () => {
+        const message = "Hello, peer!";
+        if (dataChannel && dataChannel.readyState === "open") {
+          dataChannel.send(message);
+          output.textContent += `\nMessage sent: ${message}`;
+        } else {
+          output.textContent += "\nData channel is not open.";
+        }
+      });
+    </script>
+  </body>
+</html>
