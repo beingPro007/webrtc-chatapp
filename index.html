@@ -11,6 +11,7 @@
     <h1>WebRTC Peer-to-Peer Example</h1>
     <button id="start">Start Connection</button>
     <button id="send" disabled>Send Message</button>
+    <input type="text" id="msg">
     <div id="output"></div>
 
     <script>
@@ -141,10 +142,11 @@
 
       // Send a test message to the peer
       sendButton.addEventListener("click", () => {
-        const message = "Hello, peer!";
+        const message = document.getElementById("msg")
+        const data = message.value
         if (dataChannel && dataChannel.readyState === "open") {
-          dataChannel.send(message);
-          output.textContent += `\nMessage sent: ${message}`;
+          dataChannel.send(data);
+          output.textContent += `\nMessage sent: ${data}`;
         } else {
           output.textContent += "\nData channel is not open.";
         }
